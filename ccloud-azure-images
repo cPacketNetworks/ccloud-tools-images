@@ -139,15 +139,7 @@ version_command() {
 }
 
 ccloud_azure_images_usage() {
-  if [[ -n $long_usage ]]; then
-    printf "ccloud-azure-images - Creates Azure images from Shared Access Signature URLs\n"
-    echo
-
-  else
-    printf "ccloud-azure-images - Creates Azure images from Shared Access Signature URLs\n"
-    echo
-
-  fi
+  printf "ccloud-azure-images - Creates Azure images from Shared Access Signature URLs\n\n"
 
   printf "%s\n" "Usage:"
   printf "  ccloud-azure-images [OPTIONS]\n"
@@ -155,12 +147,13 @@ ccloud_azure_images_usage() {
   printf "  ccloud-azure-images --version | -v\n"
   echo
 
-  if [[ -n $long_usage ]]; then
+  if [[ -n "$long_usage" ]]; then
+
     printf "%s\n" "Options:"
 
     printf "  %s\n" "--file, -f FILE"
     printf "    File containing the Shared Access Signature (SAS) URLs for the cPacket\n    ccloud appliances. Please provide one URL per line in the file.\n"
-    printf "    Default: ccloud-urls.txt\n"
+    printf "    %s\n" "Default: ccloud-urls.txt"
     echo
 
     printf "  %s\n" "--storage-account, -a STORAGE-ACCOUNT"
@@ -190,11 +183,14 @@ ccloud_azure_images_usage() {
 }
 
 normalize_input() {
-  local arg flags
+  local arg passthru flags
+  passthru=false
 
   while [[ $# -gt 0 ]]; do
     arg="$1"
-    if [[ $arg =~ ^(--[a-zA-Z0-9_\-]+)=(.+)$ ]]; then
+    if [[ $passthru == true ]]; then
+      input+=("$arg")
+    elif [[ $arg =~ ^(--[a-zA-Z0-9_\-]+)=(.+)$ ]]; then
       input+=("${BASH_REMATCH[1]}")
       input+=("${BASH_REMATCH[2]}")
     elif [[ $arg =~ ^(-[a-zA-Z0-9])=(.+)$ ]]; then
@@ -205,39 +201,15 @@ normalize_input() {
       for ((i = 0; i < ${#flags}; i++)); do
         input+=("-${flags:i:1}")
       done
+    elif [[ "$arg" == "--" ]]; then
+      passthru=true
+      input+=("$arg")
     else
       input+=("$arg")
     fi
 
     shift
   done
-}
-
-inspect_args() {
-  if ((${#args[@]})); then
-    readarray -t sorted_keys < <(printf '%s\n' "${!args[@]}" | sort)
-    echo args:
-    for k in "${sorted_keys[@]}"; do echo "- \${args[$k]} = ${args[$k]}"; done
-  else
-    echo args: none
-  fi
-
-  if ((${#other_args[@]})); then
-    echo
-    echo other_args:
-    echo "- \${other_args[*]} = ${other_args[*]}"
-    for i in "${!other_args[@]}"; do
-      echo "- \${other_args[$i]} = ${other_args[$i]}"
-    done
-  fi
-
-  if ((${#deps[@]})); then
-    readarray -t sorted_keys < <(printf '%s\n' "${!deps[@]}" | sort)
-    echo
-    echo deps:
-    for k in "${sorted_keys[@]}"; do echo "- \${deps[$k]} = ${deps[$k]}"; done
-  fi
-
 }
 
 # https://arsenvlad.medium.com/creating-vhd-azure-blob-sas-url-from-azure-managed-image-2be0e7c287f4
@@ -368,9 +340,11 @@ azure_get_user() {
 }
 
 parse_requirements() {
+  local key
 
   while [[ $# -gt 0 ]]; do
-    case "${1:-}" in
+    key="$1"
+    case "$key" in
       --version | -v)
         version_command
         exit
@@ -389,17 +363,23 @@ parse_requirements() {
     esac
   done
 
-  if command -v az >/dev/null 2>&1; then
-    deps['az']="$(command -v az | head -n1)"
-  else
+  missing_deps=
+
+  if ! command -v az >/dev/null 2>&1; then
     printf "missing dependency: az\n" >&2
-    exit 1
+    missing_deps=1
+  else
+    deps['az']="$(command -v az | head -n1)"
   fi
 
-  if command -v azcopy >/dev/null 2>&1; then
-    deps['azcopy']="$(command -v azcopy | head -n1)"
-  else
+  if ! command -v azcopy >/dev/null 2>&1; then
     printf "missing dependency: azcopy\n" >&2
+    missing_deps=1
+  else
+    deps['azcopy']="$(command -v azcopy | head -n1)"
+  fi
+
+  if [[ -n $missing_deps ]]; then
     exit 1
   fi
 
@@ -412,7 +392,6 @@ parse_requirements() {
       --file | -f)
 
         if [[ -n ${2+x} ]]; then
-
           args['--file']="$2"
           shift
           shift
@@ -425,7 +404,6 @@ parse_requirements() {
       --storage-account | -a)
 
         if [[ -n ${2+x} ]]; then
-
           args['--storage-account']="$2"
           shift
           shift
@@ -438,7 +416,6 @@ parse_requirements() {
       --container | -c)
 
         if [[ -n ${2+x} ]]; then
-
           args['--container']="$2"
           shift
           shift
@@ -451,7 +428,6 @@ parse_requirements() {
       --resource-group | -g)
 
         if [[ -n ${2+x} ]]; then
-
           args['--resource-group']="$2"
           shift
           shift
@@ -464,7 +440,6 @@ parse_requirements() {
       --location | -l)
 
         if [[ -n ${2+x} ]]; then
-
           args['--location']="$2"
           shift
           shift
@@ -472,6 +447,18 @@ parse_requirements() {
           printf "%s\n" "--location requires an argument: --location, -l LOCATION" >&2
           exit 1
         fi
+        ;;
+
+      --)
+        shift
+        while [[ $# -gt 0 ]]; do
+          key="$1"
+
+          printf "invalid argument: %s\n" "$key" >&2
+          exit 1
+
+        done
+        break
         ;;
 
       -?*)
@@ -499,8 +486,7 @@ parse_requirements() {
 }
 
 initialize() {
-  version="1.6.1"
-  long_usage=''
+  declare -g version="1.13.13"
   set -e
 
   # shellcheck disable=SC2034
@@ -511,10 +497,13 @@ initialize() {
 }
 
 run() {
-  declare -A args=()
-  declare -A deps=()
-  declare -a other_args=()
-  declare -a input=()
+
+  declare -g long_usage=''
+  declare -g -A args=()
+  declare -g -A deps=()
+  declare -g -a env_var_names=()
+  declare -g -a input=()
+
   normalize_input "$@"
   parse_requirements "${input[@]}"
 
@@ -523,5 +512,10 @@ run() {
   esac
 }
 
-initialize
-run "$@"
+start() {
+  command_line_args=("$@")
+  initialize
+  run "${command_line_args[@]}"
+}
+
+start "$@"
